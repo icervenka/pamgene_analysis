@@ -11,9 +11,6 @@ suppressWarnings(suppressMessages(library(dplyr)))
 
 # functions -------------
 # maybe better scaling function
-#redist.fun <- function(x){(x-min(x))/diff(range(x))}
-
-# maybe better scaling function
 redist.fun <- function(x, no_perm){(x-0)/log10(no_perm)}
 
 sum_peptide_score = function(x) {
@@ -23,30 +20,15 @@ sum_peptide_score = function(x) {
 }
 
 calculate_peptide_scores = function(pep_identifiers, value_matrix, info_df, 
-                                    ctrl_cols, exp_cols, group_name_flag, 
+                                    ctrl_cols, exp_cols,
                                     center = TRUE, scale = TRUE) {
   df_scaled = scale(value_matrix, center = center, scale = scale)
   
-  if(group_name_flag) {
-    values_ctrl = df_scaled %>% 
-      as.data.frame(stringsAsFactors = F) %>%
-      select(matches(ctrl_cols)) %>% 
-      as.matrix()
-    values_exp = df_scaled %>% 
-      as.data.frame(stringsAsFactors = F) %>%
-      select(matches(exp_cols)) %>% 
-      as.matrix()
-  } else {
-    values_ctrl = df_scaled[,ctrl_cols]
-    values_exp = df_scaled[,exp_cols]
-  }
-  
-  
   df_means = data.frame(id = pep_identifiers,
-                        A1 = rowMeans(values_ctrl),
-                        A2 = rowMeans(values_exp),
-                        A1s = matrixStats::rowSds(values_ctrl, na.rm = T),
-                        A2s = matrixStats::rowSds(values_exp, na.rm = T))
+                        A1 = rowMeans(df_scaled[,ctrl_cols]),
+                        A2 = rowMeans(df_scaled[,exp_cols]),
+                        A1s = matrixStats::rowSds(df_scaled[,ctrl_cols], na.rm = T),
+                        A2s = matrixStats::rowSds(df_scaled[,exp_cols], na.rm = T))
   df_means = df_means %>%
     dplyr::mutate(pep_score = (A2 - A1)/sqrt(A1s^2 + A2s^2))
   phos_pred = merge(info_df, df_means, by = "id")
@@ -116,47 +98,44 @@ opt_parser = OptionParser(option_list=option_list)
 opt = parse_args(opt_parser)
 
 # analysis options and arguments  -------------
+# center and scaling of the peptide values
 center.all = T
 scale.all = T
+
+# assign command line args to variables
 batch_corr = opt$batch_correction
 no_perm = opt$no_perm
 top_kinases = opt$top_kinases
 kinexus_score = opt$kinexus_score
 raw_data_file = opt$file_in
 output_file = opt$file_out
-ctrl_cols = stringr::str_split(opt$ctrl, ",")[[1]] 
-exp_cols = stringr::str_split(opt$exp, ",")[[1]]
-no_samples = length(c(ctrl_cols, exp_cols))
-
-if(no_samples == 2) {
-  group_name_flag = TRUE
-} else {
-  group_name_flag = FALSE
-  ctrl_cols = ctrl_cols %>% as.numeric()
-  exp_cols = exp_cols %>% as.numeric()
-}
 
 # generate combined peptide info -------------
-# TODO revise needed columns
 tryCatch({
   pamgene = read.csv(opt$pamgene,
                      stringsAsFactors = F) %>%
-    dplyr::select(uniprot_id, 
+    dplyr::select(id,
+                  uniprot_id, 
                   uniprot_name, 
-                  identity, 
-                  id, 
                   sequence, 
-                  phosphosite) %>%
+                  phosphosite,
+                  identity) %>%
     dplyr::distinct()
 }, error = function(e) {
   stop("Pamgene peptide file has incorrect format. See Readme.md for more details.")
 })
 
-
-# TODO revise needed columns and check for them in tryCatch
 tryCatch({
   phosphonet = read.csv(opt$phosphonet,
-                        stringsAsFactors = F)
+                        stringsAsFactors = F) %>%
+    dplyr::select(substrate,
+                  aa,
+                  site,
+                  kinase_rank,
+                  kinase_name,
+                  kinase_id,
+                  kinexus_score,
+                  kinexus_score_v2)
 }, error = function(e) {
   stop("Phosphonet peptide file has incorrect format. See Readme.md for more details.")
 })
@@ -169,29 +148,33 @@ peptide_phosphonet = merge(phosphonet,
                            by.x = c("substrate", "position"), 
                            by.y = c("uniprot_id", "phosphosite")) %>%
   dplyr::filter(kinexus_pred_score_v2 >= kinexus_score) %>%
-  dplyr::group_by(kinases_id, id) %>%
-  dplyr::arrange(kinases_id, kinase_rank) %>%
-  dplyr::distinct(kinases_id, id, .keep_all = T) %>%
-  dplyr::group_by(kinases_id) %>%
+  dplyr::group_by(kinase_id, id) %>%
+  dplyr::arrange(kinase_id, kinase_rank) %>%
+  dplyr::distinct(kinase_id, id, .keep_all = T) %>%
+  dplyr::group_by(kinase_id) %>%
   dplyr::select(c(kinase_rank, 
                   kinase_name, 
-                  position, 
+                  site, 
                   kinexus_pred_score_v2, 
-                  kinases_id, 
+                  kinase_id, 
                   id))
 
 # experimental design  -------------
-# raw_data_file = "raw_data_stk.csv"
-# output_file = "kinase_scores.txt"
-# ctrl_cols = c(1,2,3,4)
-# exp_cols = c(5,6,7,8)
+raw_data_file = "raw_data_stk.csv"
+output_file = "kinase_scores.txt"
+ctrl_cols = c(1,2,3,4)
+exp_cols = c(5,6,7,8)
 
 
 # load data -------------
-# TODO change sep to commma
-raw_data = readr::read_delim(raw_data_file, ";", escape_double = FALSE, trim_ws = TRUE, col_types = readr::cols())
+# TODO change sep to commma, simplify import
+raw_data = readr::read_delim(raw_data_file, 
+                             ";", 
+                             escape_double = FALSE, 
+                             trim_ws = TRUE, 
+                             col_types = readr::cols())
 
-# if not in long format already
+# transform if not in long format already
 if(dim(raw_data)[2] != 5) {
   raw_long = raw_data %>%
     tidyr::pivot_longer(-c(ID, UniprotAccession), names_to = "variable", values_to = "value") %>%
@@ -205,14 +188,33 @@ if(dim(raw_data)[2] != 5) {
 
 # using linear model fitting for the lack of better measurement
 # such as reaction velocity
+# removes saturated data points before fitting the model
 peptide_reaction_estimate = raw_long %>%
   dplyr::filter(measurement < max(measurement)) %>%
   dplyr::group_by(id, condition, chip) %>%
   do(broom::tidy(lm(.$measurement ~ .$time))) %>%
   dplyr::filter(term == ".$time") %>%
   dplyr::select(id, condition, chip, estimate) %>%
-  tidyr::pivot_wider(id_cols = "id", names_from = c("condition", "chip"), values_from = "estimate") %>%
+  tidyr::pivot_wider(id_cols = "id", 
+                     names_from = c("condition", "chip"), 
+                     values_from = "estimate") %>%
   tidyr::drop_na()
+
+
+# process control and experimental groups commandline args
+ctrl_cols = stringr::str_split(opt$ctrl, ",")[[1]] 
+exp_cols = stringr::str_split(opt$exp, ",")[[1]]
+
+# transform to vector of column positions (excluding the id column)
+if(length(c(ctrl_cols, exp_cols)) == 2) {
+  ctrl_cols = which(grepl(ctrl_cols, names(peptide_reaction_estimate[-1])))
+  exp_cols = which(grepl(exp_cols, names(peptide_reaction_estimate[-1])))
+} else {
+  ctrl_cols = ctrl_cols %>% as.numeric()
+  exp_cols = exp_cols %>% as.numeric()
+}
+
+no_samples = length(c(ctrl_cols, exp_cols))
 
 # ComBat batch effect normalization -----------
 if(batch_corr == TRUE) {
@@ -225,8 +227,8 @@ if(batch_corr == TRUE) {
     dplyr::select(-condition) %>%
     dplyr::select(sample, chip)
 
-  cb_data = as.matrix(peptide_reaction_estimate[,-1])
-  rownames(cb_data) = peptide_reaction_estimate[,1]
+  cb_data = as.matrix(peptide_reaction_estimate[-1])
+  rownames(cb_data) = peptide_reaction_estimate[1]
 
   cb_corr_model = model.matrix(~1, data = cb_metadata)
   cb_corr_counts = ComBat(dat=cb_data,
@@ -237,20 +239,25 @@ if(batch_corr == TRUE) {
   peptide_reaction_estimate = cb_corr_counts %>% as_tibble(rownames = "id")
 }
 
-# TODO calculate peptide statistics -------------
-# TODO export peptide statistics
-tt = apply(peptide_reaction_estimate[,2:(no_samples+1)],
-            MARGIN = 1,
-            function (x) {t.test(x[ctrl_cols], x[exp_cols], paired = F)})
-ttpvals = unname(sapply(tt, function(x) {unlist(x[3])}))
+# calculate peptide statistics -------------
+tt = peptide_reaction_estimate[-1] %>%
+  dplyr::group_by(row_number = dplyr::row_number()) %>%
+  do(broom::tidy(t.test(.[ctrl_cols], .[exp_cols]))) %>%
+  ungroup()
+
+peptide_stats = cbind(peptide_reaction_estimate,
+                     tt %>%
+                       dplyr::select(mean_ctrl = estimate1,
+                                     mean_exp = estimate2,
+                                     statistic = statistic,
+                                     pvalue = p.value))
 
 # predict kinases -------------
-peptide_scores = calculate_peptide_scores(peptide_reaction_estimate[,1],
-                                          peptide_reaction_estimate[,2:(no_samples+1)],
+peptide_scores = calculate_peptide_scores(peptide_reaction_estimate[1],
+                                          peptide_reaction_estimate[-1],
                                           peptide_phosphonet,
                                           ctrl_cols,
                                           exp_cols,
-                                          group_name_flag = group_name_flag,
                                           center = center.all,
                                           scale = scale.all)
 
@@ -275,10 +282,11 @@ cat(paste0("Number of permutations - ", no_perm, "\n"))
 # specificity score - peptide permutation -------------
 cat("Calculating specificity score - permuting peptides...\n")
 peptide_perm_model = suppressWarnings(modelr::permute(peptide_reaction_estimate, no_perm, columns = id))
-peptide_perm = purrr::map_dfr(peptide_perm_model$perm, function(x) {
-  y = as.data.frame(x)
-  w = calculate_peptide_scores(y[,1],
-                               y[,2:(no_samples+1)],
+peptide_perm = purrr::map_dfr(1:no_perm, function(x) {
+  
+  y = as.data.frame(peptide_perm_model[[1]][[x]])
+  w = calculate_peptide_scores(y[1],
+                               y[-1],
                                peptide_phosphonet,
                                ctrl_cols,
                                exp_cols,
@@ -295,10 +303,11 @@ specificity_df = calculate_permutation_score(peptide_perm,
                                              no_perm)
 
 # selectivity score - sample_permutation -------------
+# TODO maybe switch to map
 cat("Calculating selectivity score - permuting samples...\n")
 sample_perm = mclapply(1:no_perm, function(x) {
-  w = calculate_peptide_scores(peptide_reaction_estimate[,1],
-                               peptide_reaction_estimate[,2:(no_samples+1)][,gtools::permute(1:no_samples)],
+  w = calculate_peptide_scores(peptide_reaction_estimate[1],
+                               peptide_reaction_estimate[-1][,gtools::permute(1:no_samples)],
                                peptide_phosphonet,
                                ctrl_cols,
                                exp_cols,
@@ -328,5 +337,9 @@ kinase_scores = cbind.data.frame(kinase_pred_summary,
 readr::write_delim(kinase_scores,
             path = output_file,
             delim = "\t")
+
+readr::write_delim(peptide_stats,
+                   path = "peptide_scores.txt",
+                   delim = "\t")
 
 cat("Done.\n")
