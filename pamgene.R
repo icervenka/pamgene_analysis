@@ -22,13 +22,31 @@ sum_peptide_score = function(x) {
     dplyr::summarise(pn = sum(score))
 }
 
-calculate_peptide_scores = function(pep_identifiers, value_matrix, info_df, ctrl_cols, exp_cols, center = TRUE, scale = TRUE) {
+calculate_peptide_scores = function(pep_identifiers, value_matrix, info_df, 
+                                    ctrl_cols, exp_cols, group_name_flag, 
+                                    center = TRUE, scale = TRUE) {
   df_scaled = scale(value_matrix, center = center, scale = scale)
+  
+  if(group_name_flag) {
+    values_ctrl = df_scaled %>% 
+      as.data.frame(stringsAsFactors = F) %>%
+      select(matches(ctrl_cols)) %>% 
+      as.matrix()
+    values_exp = df_scaled %>% 
+      as.data.frame(stringsAsFactors = F) %>%
+      select(matches(exp_cols)) %>% 
+      as.matrix()
+  } else {
+    values_ctrl = df_scaled[,ctrl_cols]
+    values_exp = df_scaled[,exp_cols]
+  }
+  
+  
   df_means = data.frame(id = pep_identifiers,
-                        A1 = rowMeans(df_scaled[,ctrl_cols]),
-                        A2 = rowMeans(df_scaled[,exp_cols]),
-                        A1s = rowSds(df_scaled[,ctrl_cols], na.rm = T),
-                        A2s = rowSds(df_scaled[,exp_cols], na.rm = T))
+                        A1 = rowMeans(values_ctrl),
+                        A2 = rowMeans(values_exp),
+                        A1s = matrixStats::rowSds(values_ctrl, na.rm = T),
+                        A2s = matrixStats::rowSds(values_exp, na.rm = T))
   df_means = df_means %>%
     dplyr::mutate(pep_score = (A2 - A1)/sqrt(A1s^2 + A2s^2))
   phos_pred = merge(info_df, df_means, by = "id")
@@ -106,26 +124,42 @@ top_kinases = opt$top_kinases
 kinexus_score = opt$kinexus_score
 raw_data_file = opt$file_in
 output_file = opt$file_out
-ctrl_cols = stringr::str_split(opt$ctrl, ",")[[1]] %>% as.numeric()
-exp_cols = stringr::str_split(opt$exp, ",")[[1]] %>% as.numeric()
+ctrl_cols = stringr::str_split(opt$ctrl, ",")[[1]] 
+exp_cols = stringr::str_split(opt$exp, ",")[[1]]
 no_samples = length(c(ctrl_cols, exp_cols))
 
+if(no_samples == 2) {
+  group_name_flag = TRUE
+} else {
+  group_name_flag = FALSE
+  ctrl_cols = ctrl_cols %>% as.numeric()
+  exp_cols = exp_cols %>% as.numeric()
+}
 
 # generate combined peptide info -------------
 # TODO revise needed columns
-pamgene = read.csv(opt$pamgene,
-                   stringsAsFactors = F) %>%
-  dplyr::select(uniprot_id, 
-                uniprot_name, 
-                identity, 
-                id, 
-                sequence, 
-                phosphosite) %>%
-  dplyr::distinct()
+tryCatch({
+  pamgene = read.csv(opt$pamgene,
+                     stringsAsFactors = F) %>%
+    dplyr::select(uniprot_id, 
+                  uniprot_name, 
+                  identity, 
+                  id, 
+                  sequence, 
+                  phosphosite) %>%
+    dplyr::distinct()
+}, error = function(e) {
+  stop("Pamgene peptide file has incorrect format. See Readme.md for more details.")
+})
 
-# TODO revise needed columns
-phosphonet = read.csv(opt$phosphonet,
-                      stringsAsFactors = F)
+
+# TODO revise needed columns and check for them in tryCatch
+tryCatch({
+  phosphonet = read.csv(opt$phosphonet,
+                        stringsAsFactors = F)
+}, error = function(e) {
+  stop("Phosphonet peptide file has incorrect format. See Readme.md for more details.")
+})
 
 kinase_name_id = unique(phosphonet[,c(7,6)]) %>%
   setNames(c("id", "name"))
@@ -154,23 +188,30 @@ peptide_phosphonet = merge(phosphonet,
 
 
 # load data -------------
-raw_data = readr::read_delim(raw_data_file, ";", escape_double = FALSE, trim_ws = TRUE, col_types = cols())
-raw_long = melt(raw_data) %>%
-  tidyr::separate(col = variable, into = c("condition", "chip", "time"), sep = "_") %>%
-  dplyr::select(-UniprotAccession) %>%
-  setNames(c("id", "condition", "chip", "time", "measurement")) %>%
-  dplyr::mutate(time = as.numeric(time))
+# TODO change sep to commma
+raw_data = readr::read_delim(raw_data_file, ";", escape_double = FALSE, trim_ws = TRUE, col_types = readr::cols())
+
+# if not in long format already
+if(dim(raw_data)[2] != 5) {
+  raw_long = raw_data %>%
+    tidyr::pivot_longer(-c(ID, UniprotAccession), names_to = "variable", values_to = "value") %>%
+    tidyr::separate(col = variable, into = c("condition", "chip", "time"), sep = "_") %>%
+    dplyr::select(-UniprotAccession) %>%
+    setNames(c("id", "condition", "chip", "time", "measurement")) %>%
+    dplyr::mutate(time = as.numeric(time))
+} else {
+  raw_long = raw_data
+}
 
 # using linear model fitting for the lack of better measurement
 # such as reaction velocity
 peptide_reaction_estimate = raw_long %>%
   dplyr::filter(measurement < max(measurement)) %>%
   dplyr::group_by(id, condition, chip) %>%
-  do(lm = lm(.$measurement ~ .$time)) %>%
-  tidyr::tidy(lm) %>%
+  do(broom::tidy(lm(.$measurement ~ .$time))) %>%
   dplyr::filter(term == ".$time") %>%
   dplyr::select(id, condition, chip, estimate) %>%
-  dcast(id ~ condition + chip, value.var = "estimate") %>%
+  tidyr::pivot_wider(id_cols = "id", names_from = c("condition", "chip"), values_from = "estimate") %>%
   tidyr::drop_na()
 
 # ComBat batch effect normalization -----------
@@ -197,10 +238,11 @@ if(batch_corr == TRUE) {
 }
 
 # TODO calculate peptide statistics -------------
+# TODO export peptide statistics
 tt = apply(peptide_reaction_estimate[,2:(no_samples+1)],
             MARGIN = 1,
             function (x) {t.test(x[ctrl_cols], x[exp_cols], paired = F)})
-pvals = unname(sapply(tt, function(x) {unlist(x[3])}))
+ttpvals = unname(sapply(tt, function(x) {unlist(x[3])}))
 
 # predict kinases -------------
 peptide_scores = calculate_peptide_scores(peptide_reaction_estimate[,1],
@@ -208,6 +250,7 @@ peptide_scores = calculate_peptide_scores(peptide_reaction_estimate[,1],
                                           peptide_phosphonet,
                                           ctrl_cols,
                                           exp_cols,
+                                          group_name_flag = group_name_flag,
                                           center = center.all,
                                           scale = scale.all)
 
