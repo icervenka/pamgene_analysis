@@ -39,9 +39,9 @@ calculate_peptide_scores = function(pep_identifiers, value_matrix, info_df,
 estimate_top_kinases = function(phos_pred_df, kinexus_score, min_kinases = 5, max_kinases = 50) {
   diff_score = lapply(min_kinases:max_kinases, function(x) {
     phos_pred_filtered = phos_pred_df %>%
-      dplyr::filter(kinexus_pred_score_v2 >= kinexus_score) %>%
+      dplyr::filter(kinexus_score_v2 >= kinexus_score) %>%
       dplyr::filter(kinase_rank <= x)  %>%
-      dplyr::group_by(kinases_id) %>%
+      dplyr::group_by(kinase_id) %>%
       dplyr::summarise(diff_score = sum(pep_score)/n())
     phos_pred_filtered = colMeans(phos_pred_filtered[,2]) %>%
       unlist() %>%
@@ -53,17 +53,17 @@ estimate_top_kinases = function(phos_pred_df, kinexus_score, min_kinases = 5, ma
 predict_kinases = function(phos_pred_df, top_kinases) {
   kinase_list = phos_pred_df %>%
     dplyr::filter(kinase_rank <= top_kinases) %>%
-    dplyr::group_by(kinases_id) %>%
+    dplyr::group_by(kinase_id) %>%
     dplyr::mutate(n = n()) %>%
     dplyr::mutate(pep_norm = pep_score/n)
 }
 
 calculate_permutation_score = function(long_perm_df, kinase_summary, no_perm) {
-  merge(long_perm_df, kinase_summary, by = "kinases_id") %>%
+  merge(long_perm_df, kinase_summary, by = "kinase_id") %>%
     dplyr::mutate(exceeds = ifelse((abs(sum_score.x) - abs(sum_score.y)) > 0, 1, 0)) %>%
-    dplyr::group_by(kinases_id) %>%
-    dplyr::summarise(m_stat = sum(exceeds)) %>%
-    dplyr::rowwise %>%
+    dplyr::group_by(kinase_id) %>%
+    dplyr::summarise(m_stat = sum(exceeds), .groups = "drop") %>%
+    dplyr::rowwise() %>%
     dplyr::mutate(q = -log10(max(m_stat/no_perm, 1/no_perm)))
 }
 
@@ -71,8 +71,8 @@ calculate_permutation_score = function(long_perm_df, kinase_summary, no_perm) {
 option_list = list(
   make_option(c("-i", "--file_in"), type="character", default=NULL,
               help="dataset file name", metavar="character"),
-  make_option(c("-o", "--file_out"), type="character", default="kinase_scores.txt",
-              help="output file name [default=%default]", metavar="character"),
+  make_option(c("-o", "--dir_out"), type="character", default=".",
+              help="output directory [default=current dir]", metavar="character"),
   make_option(c("--pamgene"), type="character", default="pamgene.csv",
               help="list of peptides included in pamgene chip, see Readme.md 
               for formatting details [default=%default]", metavar="character"),
@@ -108,7 +108,7 @@ no_perm = opt$no_perm
 top_kinases = opt$top_kinases
 kinexus_score = opt$kinexus_score
 raw_data_file = opt$file_in
-output_file = opt$file_out
+output_dir = opt$dir_out
 
 # generate combined peptide info -------------
 tryCatch({
@@ -134,20 +134,20 @@ tryCatch({
                   kinase_rank,
                   kinase_name,
                   kinase_id,
-                  kinexus_score,
                   kinexus_score_v2)
 }, error = function(e) {
   stop("Phosphonet peptide file has incorrect format. See Readme.md for more details.")
 })
 
-kinase_name_id = unique(phosphonet[,c(7,6)]) %>%
-  setNames(c("id", "name"))
+kinase_name_id = phosphonet %>%
+  dplyr::select(kinase_id, kinase_name) %>%
+  unique()
 
 peptide_phosphonet = merge(phosphonet, 
                            pamgene, 
-                           by.x = c("substrate", "position"), 
+                           by.x = c("substrate", "site"), 
                            by.y = c("uniprot_id", "phosphosite")) %>%
-  dplyr::filter(kinexus_pred_score_v2 >= kinexus_score) %>%
+  dplyr::filter(kinexus_score_v2 >= kinexus_score) %>%
   dplyr::group_by(kinase_id, id) %>%
   dplyr::arrange(kinase_id, kinase_rank) %>%
   dplyr::distinct(kinase_id, id, .keep_all = T) %>%
@@ -155,16 +155,9 @@ peptide_phosphonet = merge(phosphonet,
   dplyr::select(c(kinase_rank, 
                   kinase_name, 
                   site, 
-                  kinexus_pred_score_v2, 
+                  kinexus_score_v2, 
                   kinase_id, 
                   id))
-
-# experimental design  -------------
-raw_data_file = "raw_data_stk.csv"
-output_file = "kinase_scores.txt"
-ctrl_cols = c(1,2,3,4)
-exp_cols = c(5,6,7,8)
-
 
 # load data -------------
 # TODO change sep to commma, simplify import
@@ -271,7 +264,7 @@ if(is.null(top_kinases)) {
 }
 
 kinase_pred_summary = predict_kinases(peptide_scores, top_kinases) %>%
-  dplyr::group_by(kinases_id) %>%
+  dplyr::group_by(kinase_id) %>%
   dplyr::summarise(sum_score = sum(pep_norm),
                    mean_score = mean(pep_norm),
                    median_score = median(pep_norm),
@@ -281,8 +274,8 @@ kinase_pred_summary = predict_kinases(peptide_scores, top_kinases) %>%
 cat(paste0("Number of permutations - ", no_perm, "\n"))
 pbp = txtProgressBar(min = 0,
                      max = no_perm,
-                     style = 3,
-                     width = 100,
+                     style = 1,
+                     width = 70,
                      char = "=")
 # specificity score - peptide permutation -------------
 cat("Calculating specificity score - permuting peptides...\n")
@@ -298,7 +291,7 @@ peptide_perm = purrr::map_dfr(1:no_perm, function(x) {
                                center = center.all,
                                scale = scale.all)
   z = predict_kinases(w, top_kinases) %>%
-    dplyr::group_by(kinases_id) %>%
+    dplyr::group_by(kinase_id) %>%
     dplyr::summarise(sum_score = sum(pep_norm),
                      mean_score = mean(pep_norm),
                      sd_score = sd(pep_norm))
@@ -306,18 +299,16 @@ peptide_perm = purrr::map_dfr(1:no_perm, function(x) {
 close(pbp)
 specificity_df = calculate_permutation_score(peptide_perm, 
                                              kinase_pred_summary, 
-                                             no_perm)
+                                             no_perm) %>%
+  ungroup()
 
 # selectivity score - sample_permutation -------------
-# TODO maybe switch to map
-
-
 cat("Calculating selectivity score - permuting samples...\n")
 # progress_bar
 pbs = txtProgressBar(min = 0,
                      max = no_perm,
-                     style = 3,
-                     width = 100,
+                     style = 1,
+                     width = 70,
                      char = "=")
 
 sample_perm = purrr::map_dfr(1:no_perm, function(x) {
@@ -331,31 +322,34 @@ sample_perm = purrr::map_dfr(1:no_perm, function(x) {
                                scale = scale.all)
 
     z = predict_kinases(w, top_kinases) %>%
-      dplyr::group_by(kinases_id) %>%
+      dplyr::group_by(kinase_id) %>%
       dplyr::summarise(sum_score = sum(pep_norm),
                        mean_score = mean(pep_norm),
                        sd_score = sd(pep_norm))
 })
 close(pbs)
-selectivity_df = calculate_permutation_score(sample_perm, kinase_pred_summary, no_perm)
+selectivity_df = calculate_permutation_score(sample_perm, kinase_pred_summary, no_perm) %>%
+  ungroup()
 
 # final kinase scores -------------
 kinase_scores = cbind.data.frame(kinase_pred_summary,
                                  specificity = redist.fun(specificity_df$q, no_perm),
                                  selectivity = redist.fun(selectivity_df$q, no_perm)) %>%
   dplyr::mutate(total = specificity + selectivity) %>%
-  dplyr::left_join(kinase_name_id, by = c("kinases_id" = "id")) %>%
-  dplyr::select(kinases_id, name, specificity, selectivity, total, everything()) %>%
+  dplyr::left_join(kinase_name_id, by = "kinase_id") %>%
+  dplyr::select(kinase_id, kinase_name, specificity, selectivity, total, everything()) %>%
   dplyr::arrange(-total, -abs(sum_score)) %>%
   tidyr::drop_na()
 
 # export data -------------
-readr::write_delim(kinase_scores,
-            path = output_file,
-            delim = "\t")
-
+cat("Exporting peptide scores.\n")
 readr::write_delim(peptide_stats,
-                   path = "peptide_scores.txt",
+                   file = paste0(output_dir, "/", "peptide_scores.txt"),
                    delim = "\t")
+
+cat("Exporting kinase scores.\n")
+readr::write_delim(kinase_scores,
+            file = paste0(output_dir, "/", "kinase_scores.txt"),
+            delim = "\t")
 
 cat("Done.\n")
