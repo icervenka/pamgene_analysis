@@ -279,11 +279,16 @@ kinase_pred_summary = predict_kinases(peptide_scores, top_kinases) %>%
                    no_peptides = mean(n))
 
 cat(paste0("Number of permutations - ", no_perm, "\n"))
+pbp = txtProgressBar(min = 0,
+                     max = no_perm,
+                     style = 3,
+                     width = 100,
+                     char = "=")
 # specificity score - peptide permutation -------------
 cat("Calculating specificity score - permuting peptides...\n")
 peptide_perm_model = suppressWarnings(modelr::permute(peptide_reaction_estimate, no_perm, columns = id))
 peptide_perm = purrr::map_dfr(1:no_perm, function(x) {
-  
+  setTxtProgressBar(pbp, x)
   y = as.data.frame(peptide_perm_model[[1]][[x]])
   w = calculate_peptide_scores(y[1],
                                y[-1],
@@ -298,14 +303,25 @@ peptide_perm = purrr::map_dfr(1:no_perm, function(x) {
                      mean_score = mean(pep_norm),
                      sd_score = sd(pep_norm))
 })
+close(pbp)
 specificity_df = calculate_permutation_score(peptide_perm, 
                                              kinase_pred_summary, 
                                              no_perm)
 
 # selectivity score - sample_permutation -------------
 # TODO maybe switch to map
+
+
 cat("Calculating selectivity score - permuting samples...\n")
-sample_perm = mclapply(1:no_perm, function(x) {
+# progress_bar
+pbs = txtProgressBar(min = 0,
+                     max = no_perm,
+                     style = 3,
+                     width = 100,
+                     char = "=")
+
+sample_perm = purrr::map_dfr(1:no_perm, function(x) {
+  setTxtProgressBar(pbs, x)
   w = calculate_peptide_scores(peptide_reaction_estimate[1],
                                peptide_reaction_estimate[-1][,gtools::permute(1:no_samples)],
                                peptide_phosphonet,
@@ -319,8 +335,8 @@ sample_perm = mclapply(1:no_perm, function(x) {
       dplyr::summarise(sum_score = sum(pep_norm),
                        mean_score = mean(pep_norm),
                        sd_score = sd(pep_norm))
-}) %>% dplyr::bind_rows()
-
+})
+close(pbs)
 selectivity_df = calculate_permutation_score(sample_perm, kinase_pred_summary, no_perm)
 
 # final kinase scores -------------
