@@ -1,5 +1,6 @@
 #!/usr/local/bin/RScript
 
+# imports -------------
 suppressWarnings(suppressMessages(library(optparse)))
 suppressWarnings(suppressMessages(library(broom)))
 suppressWarnings(suppressMessages(library(MESS))) # for auc function
@@ -10,15 +11,41 @@ suppressWarnings(suppressMessages(library(parallel)))
 suppressWarnings(suppressMessages(library(dplyr)))
 
 # functions -------------
-# maybe better scaling function
-redist.fun <- function(x, no_perm){(x-0)/log10(no_perm)}
 
-sum_peptide_score = function(x) {
-  as.data.frame(x) %>%
-    dplyr::group_by(id) %>%
-    dplyr::summarise(pn = sum(score))
-}
+# TODO maybe better scaling function
+#' Scale kinase selectivity and specificity measures to 0-1 range
+#' based on number of permutations
+#'
+#' @param x measure to scale
+#' @param no_perm number of permutations used to calculate x
+#'
+#' @return x scaled do (0,1) range
+#'
+#' @examples
+redist.fun = function(x, no_perm){(x-0)/log10(no_perm)}
 
+#' Calculates peptide scores based on mean and sd of control and experimental groups
+#'
+#' @param pep_identifiers vector or data.frame column of unique peptide 
+#' identifiers present on the pamgene chip
+#' @param value_matrix matrix of peptide kinetics measurements, row order has
+#' to be preserved with pep_identifiers
+#' @param info_df data.frame summarising the pamgene peptide chip data and phosphonet
+#' kinase data
+#' @param ctrl_cols integer vector of control column position in peptide
+#' kinetics matrix 
+#' @param exp_cols integer vector of experimental column position in peptide
+#' kinetics matrix 
+#' @param center logical value - center the matrix of peptide values
+#' @param scale logical value - scale the matrix of peptide values
+#'
+#' @return data.frame with calculated score for each peptide on pamgene chip
+#' based on following formula:
+#' (mean(exp_group) - mean(ctrl_group))/sqrt(sd(ctrl_group)^2 + sd(exp_group)^2)
+#'
+#' @examples
+#' TODO move merging into another function
+#' TODO provide data as single variable and create matrix with rownames instead
 calculate_peptide_scores = function(pep_identifiers, value_matrix, info_df, 
                                     ctrl_cols, exp_cols,
                                     center = TRUE, scale = TRUE) {
@@ -36,6 +63,23 @@ calculate_peptide_scores = function(pep_identifiers, value_matrix, info_df,
   # phos_pred = phos_pred %>% dplyr::mutate(pep_kinase_score = pep_score * log_pred_score)
 }
 
+#' Estimates the number of top kinases to use in kinase prediction. Phosphonet website 
+#' reports 50 kinases as being able to phosphorylate specific peptide, using only subset 
+#' of top N kinases can give better results. This function is invoked if the number of
+#' top kinases is not specified on commandline. It works by iteratively increasing
+#' the number of included kinases, calculating the mean of average peptide scores for 
+#' each set of kinases, and choosing the group with maximum value
+#'
+#' @param phos_pred_df data.frame of peptide scores and kinases reported for each pamgene peptide
+#' on the chip. 
+#' @param kinexus_score integer - threshold kinexus v2 score the kinase has to pass to be considered.
+#' Low score kinases are filtered out before selecting top N kinases to include
+#' @param min_kinases integer - minumum number of kinases to consider. The default value is 5
+#' @param max_kinases integer - minumum number of kinases to consider. The default value is 50
+#'
+#' @return integer - number of top N kinases to include in prediction
+#'
+#' @examples
 estimate_top_kinases = function(phos_pred_df, kinexus_score, min_kinases = 5, max_kinases = 50) {
   diff_score = lapply(min_kinases:max_kinases, function(x) {
     phos_pred_filtered = phos_pred_df %>%
@@ -43,6 +87,8 @@ estimate_top_kinases = function(phos_pred_df, kinexus_score, min_kinases = 5, ma
       dplyr::filter(kinase_rank <= x)  %>%
       dplyr::group_by(kinase_id) %>%
       dplyr::summarise(diff_score = sum(pep_score)/n())
+    
+    # calculate average of diff_score
     phos_pred_filtered = colMeans(phos_pred_filtered[,2]) %>%
       unlist() %>%
       unname()
@@ -50,6 +96,18 @@ estimate_top_kinases = function(phos_pred_df, kinexus_score, min_kinases = 5, ma
   top_kinases = (min_kinases:max_kinases)[which.max(diff_score)]
 }
 
+#' Predicts kinases that phosphorylate specific pamgene peptide by dividing
+#' the peptide score for each peptide by factor corresponding to the total number
+#' of times the kinase appears among top N kinases.
+#'
+#' @param phos_pred_df peptide scores for pamgene peptides 
+#' @param top_kinases top N kinases for each peptide to include in the calculations.
+#' Can be estimated from data by 'estimate_top_kinses' function or specified directly.
+#'
+#' @return
+#'
+#' @examples
+#' TODO include summary statistics in the function
 predict_kinases = function(phos_pred_df, top_kinases) {
   kinase_list = phos_pred_df %>%
     dplyr::filter(kinase_rank <= top_kinases) %>%
@@ -58,6 +116,21 @@ predict_kinases = function(phos_pred_df, top_kinases) {
     dplyr::mutate(pep_norm = pep_score/n)
 }
 
+#' Calculate final metrics aggregating calculation on permutated data (row or column).
+#' First the number of times the peptide scores from all permutations exceeds the 
+#' peptide score calculated on the original data set is reported as m_stat. Next,
+#' q statistics expressed as -log10(max(m_stat/no_perm, 1/no_perm) is reported
+#'
+#' @param long_perm_df data.frame summarising the results from permutation calculations
+#' @param kinase_summary data.frame of predicted kinases for phosphosites
+#' @param no_perm integer, number of permutations used to calculate the statistics
+#'
+#' @return data.frame containing following columns:
+#' - kinase_id
+#' - m_stat
+#' - q
+#'
+#' @examples
 calculate_permutation_score = function(long_perm_df, kinase_summary, no_perm) {
   merge(long_perm_df, kinase_summary, by = "kinase_id") %>%
     dplyr::mutate(exceeds = ifelse((abs(sum_score.x) - abs(sum_score.y)) > 0, 1, 0)) %>%
@@ -111,6 +184,8 @@ raw_data_file = opt$file_in
 output_dir = opt$dir_out
 
 # generate combined peptide info -------------
+
+# read info on pamgene peptides
 tryCatch({
   pamgene = read.csv(opt$pamgene,
                      stringsAsFactors = F) %>%
@@ -125,6 +200,7 @@ tryCatch({
   stop("Pamgene peptide file has incorrect format. See Readme.md for more details.")
 })
 
+# read info on predicted kinases from phosphonet.ca
 tryCatch({
   phosphonet = read.csv(opt$phosphonet,
                         stringsAsFactors = F) %>%
@@ -139,10 +215,12 @@ tryCatch({
   stop("Phosphonet peptide file has incorrect format. See Readme.md for more details.")
 })
 
+# extract data.frame mapping of kinase ids to kinase names
 kinase_name_id = phosphonet %>%
   dplyr::select(kinase_id, kinase_name) %>%
   unique()
 
+# merge pamgene and phosphonet data to single 'metadata' data.frame
 peptide_phosphonet = merge(phosphonet, 
                            pamgene, 
                            by.x = c("substrate", "site"), 
@@ -175,13 +253,16 @@ if(dim(raw_data)[2] != 5) {
     dplyr::select(-UniprotAccession) %>%
     setNames(c("id", "condition", "chip", "time", "measurement")) %>%
     dplyr::mutate(time = as.numeric(time))
-} else {
+} else if(names(raw_data) == c("id", "condition", "chip", "time", "measurement")) {
   raw_long = raw_data
+} else {
+  stop("Format of input data not recognized. Please reformat your data and try again.")
 }
 
 # using linear model fitting for the lack of better measurement
 # such as reaction velocity
 # removes saturated data points before fitting the model
+# TODO refactor to function
 peptide_reaction_estimate = raw_long %>%
   dplyr::filter(measurement < max(measurement)) %>%
   dplyr::group_by(id, condition, chip) %>%
@@ -193,7 +274,7 @@ peptide_reaction_estimate = raw_long %>%
                      values_from = "estimate") %>%
   tidyr::drop_na()
 
-
+# TODO refactor to function
 # process control and experimental groups commandline args
 ctrl_cols = stringr::str_split(opt$ctrl, ",")[[1]] 
 exp_cols = stringr::str_split(opt$exp, ",")[[1]]
@@ -233,6 +314,10 @@ if(batch_corr == TRUE) {
 }
 
 # calculate peptide statistics -------------
+# t.test between control and experimental groups, use broom::tidy to
+# extract htest objects into the dataframe, gives error when id column
+# is included, therefore it's calculated seperately and then column
+# bound to the ids
 tt = peptide_reaction_estimate[-1] %>%
   dplyr::group_by(row_number = dplyr::row_number()) %>%
   do(broom::tidy(t.test(.[ctrl_cols], .[exp_cols]))) %>%
@@ -246,6 +331,7 @@ peptide_stats = cbind(peptide_reaction_estimate,
                                      pvalue = p.value))
 
 # predict kinases -------------
+# calculate peptide scores
 peptide_scores = calculate_peptide_scores(peptide_reaction_estimate[1],
                                           peptide_reaction_estimate[-1],
                                           peptide_phosphonet,
@@ -254,6 +340,8 @@ peptide_scores = calculate_peptide_scores(peptide_reaction_estimate[1],
                                           center = center.all,
                                           scale = scale.all)
 
+# if top_kinases are not specified on commandline, predict from provided data
+# pamgene recommends not using more than 15, but the value can be overridden
 if(is.null(top_kinases)) {
   cat("Determining optimal number of kinases to include...\n")
   top_kinases = estimate_top_kinases(peptide_scores,
@@ -263,6 +351,7 @@ if(is.null(top_kinases)) {
   cat(paste0(top_kinases, " top kinases selected.\n"))
 }
 
+# use peptide scores to predict most likely reponsible kinases
 kinase_pred_summary = predict_kinases(peptide_scores, top_kinases) %>%
   dplyr::group_by(kinase_id) %>%
   dplyr::summarise(sum_score = sum(pep_norm),
@@ -271,15 +360,21 @@ kinase_pred_summary = predict_kinases(peptide_scores, top_kinases) %>%
                    sd_score = sd(pep_norm),
                    no_peptides = mean(n))
 
-cat(paste0("Number of permutations - ", no_perm, "\n"))
+# specificity score - peptide permutation -------------
+cat("Calculating specificity score - permuting peptides...\n")
+# progress bar
 pbp = txtProgressBar(min = 0,
                      max = no_perm,
                      style = 1,
                      width = 70,
                      char = "=")
-# specificity score - peptide permutation -------------
-cat("Calculating specificity score - permuting peptides...\n")
+
+# create data.frame of row permutations to feed into the calculations
 peptide_perm_model = suppressWarnings(modelr::permute(peptide_reaction_estimate, no_perm, columns = id))
+
+# iterate through permutations, calculating peptide scores together
+# together with kinase prediction for each 
+# return the combined data.frame of kinase prediction for all permutations
 peptide_perm = purrr::map_dfr(1:no_perm, function(x) {
   setTxtProgressBar(pbp, x)
   y = as.data.frame(peptide_perm_model[[1]][[x]])
@@ -297,6 +392,9 @@ peptide_perm = purrr::map_dfr(1:no_perm, function(x) {
                      sd_score = sd(pep_norm))
 })
 close(pbp)
+
+# merge together prediction of kinases by counting how many times
+# the score from original data is higher then the one from permutations
 specificity_df = calculate_permutation_score(peptide_perm, 
                                              kinase_pred_summary, 
                                              no_perm) %>%
@@ -304,16 +402,19 @@ specificity_df = calculate_permutation_score(peptide_perm,
 
 # selectivity score - sample_permutation -------------
 cat("Calculating selectivity score - permuting samples...\n")
-# progress_bar
+# progress bar
 pbs = txtProgressBar(min = 0,
                      max = no_perm,
                      style = 1,
                      width = 70,
                      char = "=")
-
+# Here the data.frame of permutations is not calculated beforehand, the column
+# positions for permutations are passed directly into calculate_peptide_scores function
+# return the combined data.frame of kinase prediction for all permutations
 sample_perm = purrr::map_dfr(1:no_perm, function(x) {
   setTxtProgressBar(pbs, x)
   w = calculate_peptide_scores(peptide_reaction_estimate[1],
+                               # in place column permutation
                                peptide_reaction_estimate[-1][,gtools::permute(1:no_samples)],
                                peptide_phosphonet,
                                ctrl_cols,
@@ -328,11 +429,19 @@ sample_perm = purrr::map_dfr(1:no_perm, function(x) {
                        sd_score = sd(pep_norm))
 })
 close(pbs)
+
+# merge together prediction of kinases by counting how many times
+# the score from original data is higher then the one from permutations
 selectivity_df = calculate_permutation_score(sample_perm, kinase_pred_summary, no_perm) %>%
   ungroup()
 
 # final kinase scores -------------
+# combine selectivity and specificity data.frames created by row and column permutations
+# rearrange the data.frame columns and order rows for export
+
 kinase_scores = cbind.data.frame(kinase_pred_summary,
+                                 # these measures are always in range (0, log10(no_perm)) and
+                                 # need to be scaled to (0,1)
                                  specificity = redist.fun(specificity_df$q, no_perm),
                                  selectivity = redist.fun(selectivity_df$q, no_perm)) %>%
   dplyr::mutate(total = specificity + selectivity) %>%

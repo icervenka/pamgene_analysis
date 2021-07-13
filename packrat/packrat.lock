@@ -78,8 +78,8 @@ Package: MESS
 Source: CRAN
 Version: 0.5.7
 Hash: 73fe8f4e960b12b0f0b9287eec4cc6c3
-Requires: MASS, Rcpp, Matrix, RcppArmadillo, geeM, geepack, ggformula,
-    ggplot2, glmnet, kinship2, mvtnorm
+Requires: MASS, Matrix, Rcpp, geeM, geepack, ggformula, ggplot2,
+    glmnet, kinship2, RcppArmadillo, mvtnorm
 
 Package: Matrix
 Source: CRAN
@@ -186,7 +186,7 @@ Package: broom
 Source: CRAN
 Version: 0.7.8
 Hash: 29d7a85a2bc596ef5d55c0afac766d9e
-Requires: ellipsis, glue, rlang, backports, dplyr, generics, purrr,
+Requires: backports, ellipsis, glue, rlang, dplyr, generics, purrr,
     stringr, tibble, tidyr
 
 Package: cachem
@@ -314,7 +314,7 @@ Package: geepack
 Source: CRAN
 Version: 1.3-2
 Hash: 4d8984d020207eab678a36e7aeb7aab4
-Requires: MASS, broom, magrittr
+Requires: broom, magrittr, MASS
 
 Package: genefilter
 Source: Bioconductor
@@ -343,14 +343,14 @@ Package: ggformula
 Source: CRAN
 Version: 0.10.1
 Hash: bd407e2164e0973dfcf629c61f96deb8
-Requires: magrittr, rlang, stringr, tibble, ggforce, ggplot2, ggridges,
-    ggstance, labelled, mosaicCore, scales
+Requires: ggforce, ggplot2, magrittr, rlang, scales, stringr, tibble,
+    ggridges, ggstance, labelled, mosaicCore
 
 Package: ggplot2
 Source: CRAN
 Version: 3.3.5
 Hash: b54994f1f414ea1e2ecf978d298e9739
-Requires: MASS, glue, rlang, tibble, digest, gtable, isoband, mgcv,
+Requires: MASS, digest, glue, rlang, tibble, gtable, isoband, mgcv,
     scales, withr
 
 Package: ggridges
@@ -369,7 +369,7 @@ Package: glmnet
 Source: CRAN
 Version: 4.1-2
 Hash: 42600a8d7c0d13d8d168667119c2446f
-Requires: Matrix, foreach, shape, survival
+Requires: Matrix, foreach, survival, shape
 
 Package: glue
 Source: CRAN
@@ -390,7 +390,7 @@ Package: haven
 Source: CRAN
 Version: 2.4.1
 Hash: dd5d24019a1cf5e8600111ccd6af04cf
-Requires: cpp11, rlang, tibble, tidyselect, vctrs, forcats, hms, readr
+Requires: cpp11, forcats, rlang, tibble, tidyselect, vctrs, hms, readr
 
 Package: hms
 Source: CRAN
@@ -585,8 +585,8 @@ Package: readr
 Source: CRAN
 Version: 1.4.0
 Hash: 74661267438381cf8480097b7c28de19
-Requires: BH, R6, cli, cpp11, crayon, hms, lifecycle, rlang, tibble,
-    clipr
+Requires: BH, R6, cli, clipr, cpp11, crayon, hms, lifecycle, rlang,
+    tibble
 
 Package: rlang
 Source: CRAN
@@ -597,7 +597,7 @@ Package: scales
 Source: CRAN
 Version: 1.1.1
 Hash: b67ae9f62ecb8912751eb664055d8f8a
-Requires: R6, lifecycle, RColorBrewer, farver, labeling, munsell,
+Requires: R6, farver, lifecycle, RColorBrewer, labeling, munsell,
     viridisLite
 
 Package: shape
