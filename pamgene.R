@@ -1,18 +1,16 @@
 #!/usr/local/bin/RScript
 
 # imports -------------
-suppressWarnings(suppressMessages(library(readr)))
-suppressWarnings(suppressMessages(library(stringr)))
 suppressWarnings(suppressMessages(library(optparse)))
 suppressWarnings(suppressMessages(library(broom)))
 suppressWarnings(suppressMessages(library(MESS))) # for auc function
 suppressWarnings(suppressMessages(library(matrixStats)))
 suppressWarnings(suppressMessages(library(modelr)))
 suppressWarnings(suppressMessages(library(gtools)))
-suppressWarnings(suppressMessages(library(parallel)))
 suppressWarnings(suppressMessages(library(purrr)))
 suppressWarnings(suppressMessages(library(tidyr)))
 suppressWarnings(suppressMessages(library(tibble)))
+suppressWarnings(suppressMessages(library(stringr)))
 suppressWarnings(suppressMessages(library(dplyr)))
 
 # functions -------------
@@ -53,7 +51,6 @@ redist.fun = function(x, no_perm){(x-0)/log10(no_perm)}
 #' TODO move merging into another function
 #' TODO provide data as single variable and create matrix with rownames instead
 calculate_peptide_scores = function(data_df, metadata, info_df, 
-                                    ctrl_cols, exp_cols,
                                     center = TRUE, scale = TRUE) {
   # convert data.frame to matrix with rownames for scaling
   data_matrix = as.matrix(data_df[-1])
@@ -210,11 +207,13 @@ option_list = list(
               Can be generated using phosphonet scraper. See Readme.md for more 
               details. [default=%default]", metavar="character"),
   make_option(c("-c", "--ctrl"), type="character", default="1,2,3,4",
-              help="comma delimited numbers of control columns in input file 
-              [default=%default]", metavar="character"),
+              help="comma delimited numbers of control columns in input file or a 
+              single string indicating group name [default=%default]", 
+              metavar="character"),
   make_option(c("-e", "--exp"), type="character", default="5,6,7,8",
               help="comma delimited numbers of experimental columns in input file 
-              [default=%default]", metavar="character"),
+              or asingle string indicating group name [default=%default]", 
+              metavar="character"),
   make_option(c("--top_kinases"), type="character", default=NULL,
               help="top n kinases identified for peptide", metavar="character"),
   make_option(c("--kinexus_score"), type="numeric", default=300,
@@ -263,7 +262,6 @@ tryCatch({
   phosphonet = read.csv(opt$phosphonet,
                         stringsAsFactors = F) %>%
     dplyr::select(substrate,
-                  aa,
                   site,
                   kinase_rank,
                   kinase_name,
@@ -296,13 +294,14 @@ peptide_phosphonet = merge(phosphonet,
                   id))
 
 # load data -------------
-# TODO change sep to commma, simplify import
-# TODO change to base R ro remove readr dependency
-raw_data = readr::read_delim(raw_data_file, 
-                             ";", 
-                             escape_double = FALSE, 
-                             trim_ws = TRUE, 
-                             col_types = readr::cols())
+# raw_data = readr::read_delim(raw_data_file, 
+#                              ";", 
+#                              escape_double = FALSE, 
+#                              trim_ws = TRUE, 
+#                              col_types = readr::cols())
+
+raw_data = read.csv(raw_data_file,
+                    stringsAsFactors = F)
 
 # transform if not in long format already
 if(dim(raw_data)[2] != 6) {
@@ -489,15 +488,18 @@ peptide_stats = peptide_reaction_estimate %>%
   dplyr::left_join(peptide_reaction_estimate, by = "id")
 
 # export data -------------
-# TODO change to base R ro remove readr dependency
 cat("Exporting peptide scores.\n")
-readr::write_delim(peptide_stats,
-                   file = paste0(output_dir, "/", "peptide_scores.txt"),
-                   delim = "\t")
+write.table(peptide_stats,
+            file = paste0(output_dir, "/", "peptide_scores.txt"),
+            sep = "\t",
+            quote = FALSE,
+            row.names = FALSE)
 
 cat("Exporting kinase scores.\n")
-readr::write_delim(kinase_scores,
+write.table(kinase_scores,
             file = paste0(output_dir, "/", "kinase_scores.txt"),
-            delim = "\t")
+            sep = "\t",
+            quote = FALSE,
+            row.names = FALSE)
 
 cat("Done.\n")

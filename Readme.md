@@ -25,7 +25,7 @@ pamgene.R -i raw_data_stk.csv --pamgene pamgene.csv --phosphonet phosphonet.csv 
 
 `--no_perm` number of permutations used to calculate specificity and selectivity scores
 
-`-b, --batch_correction` whether to remove batch effect from peptide kinetics matrix. Uses sva::ComBat for calculations.
+`-b, --batch_correction` whether to remove batch effect from peptide kinetics matrix. Uses [sva::ComBat](https://www.bioconductor.org/packages/release/bioc/html/sva.html) for calculations.
 
 ## Example output
 
@@ -84,3 +84,4 @@ With the knowledge of peptides included in the chip, phosphonet file can be gene
 ## Known Issues and limitations
 - Script is only able to calculate kinase activity comparing two groups (control vs. experimental)
 - Pamgene and Phosphonet files are not supplied, users are required to generate their own
+- In current release the peptide kinetics matrix is automatically scaled and centered, if other beheviour is desired, it has to be changed in the code directly
