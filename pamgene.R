@@ -7,6 +7,8 @@ suppressWarnings(suppressMessages(library(MESS))) # for auc function
 suppressWarnings(suppressMessages(library(matrixStats)))
 suppressWarnings(suppressMessages(library(modelr)))
 suppressWarnings(suppressMessages(library(gtools)))
+suppressWarnings(suppressMessages(library(ggplot2)))
+suppressWarnings(suppressMessages(library(pheatmap)))
 suppressWarnings(suppressMessages(library(purrr)))
 suppressWarnings(suppressMessages(library(tidyr)))
 suppressWarnings(suppressMessages(library(tibble)))
@@ -294,12 +296,6 @@ peptide_phosphonet = merge(phosphonet,
                   id))
 
 # load data -------------
-# raw_data = readr::read_delim(raw_data_file, 
-#                              ";", 
-#                              escape_double = FALSE, 
-#                              trim_ws = TRUE, 
-#                              col_types = readr::cols())
-
 raw_data = read.csv(raw_data_file,
                     stringsAsFactors = F)
 
@@ -494,6 +490,20 @@ write.table(peptide_stats,
             sep = "\t",
             quote = FALSE,
             row.names = FALSE)
+
+p = pheatmap(peptide_reaction_estimate %>%
+         tibble::column_to_rownames(var = "id"), 
+         cluster_cols = F, 
+         cluster_rows = T, 
+         cellwidth = 8,
+         cellheight = 8,
+         fontsize_row = 8,
+         scale = "row")
+ggplot2::ggsave("peptide_heatmap.png", 
+                plot = p, 
+                units = "mm", 
+                height = 500, 
+                width = 150)
 
 cat("Exporting kinase scores.\n")
 write.table(kinase_scores,
