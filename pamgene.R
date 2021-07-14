@@ -1,6 +1,8 @@
 #!/usr/local/bin/RScript
 
 # imports -------------
+suppressWarnings(suppressMessages(library(readr)))
+suppressWarnings(suppressMessages(library(stringr)))
 suppressWarnings(suppressMessages(library(optparse)))
 suppressWarnings(suppressMessages(library(broom)))
 suppressWarnings(suppressMessages(library(MESS))) # for auc function
@@ -8,6 +10,9 @@ suppressWarnings(suppressMessages(library(matrixStats)))
 suppressWarnings(suppressMessages(library(modelr)))
 suppressWarnings(suppressMessages(library(gtools)))
 suppressWarnings(suppressMessages(library(parallel)))
+suppressWarnings(suppressMessages(library(purrr)))
+suppressWarnings(suppressMessages(library(tidyr)))
+suppressWarnings(suppressMessages(library(tibble)))
 suppressWarnings(suppressMessages(library(dplyr)))
 
 # functions -------------
@@ -51,8 +56,9 @@ calculate_peptide_scores = function(data_df, metadata, info_df,
                                     ctrl_cols, exp_cols,
                                     center = TRUE, scale = TRUE) {
   # convert data.frame to matrix with rownames for scaling
-  data_matrix = data_df[-1]
-  rownames(data_matrix) = data_df[1]
+  data_matrix = as.matrix(data_df[-1])
+
+    rownames(data_matrix) = data_df %>% dplyr::pull(id)
   df_scaled = scale(data_matrix, center = center, scale = scale)
   
   # peptide score calculation of scaled and centered data
@@ -69,7 +75,7 @@ calculate_peptide_scores = function(data_df, metadata, info_df,
 }
 
 #' Parses group information for samples from commandline arguments. Group info
-#' can be specified either as comma-separated column indices of alphabetically 
+#' can be specified either as comma-separated indices of alphabetically 
 #' arranged <group_name>_<chip_id> denominators or a single <group_name> string.
 #' For the calculations of column indices from <group_name> first column containing
 #' peptide ids is ommited.
@@ -246,10 +252,7 @@ tryCatch({
                      stringsAsFactors = F) %>%
     dplyr::select(id,
                   uniprot_id, 
-                  uniprot_name, 
-                  sequence, 
-                  phosphosite,
-                  identity) %>%
+                  phosphosite) %>%
     dplyr::distinct()
 }, error = function(e) {
   stop("Pamgene peptide file has incorrect format. See Readme.md for more details.")
@@ -294,6 +297,7 @@ peptide_phosphonet = merge(phosphonet,
 
 # load data -------------
 # TODO change sep to commma, simplify import
+# TODO change to base R ro remove readr dependency
 raw_data = readr::read_delim(raw_data_file, 
                              ";", 
                              escape_double = FALSE, 
@@ -301,18 +305,16 @@ raw_data = readr::read_delim(raw_data_file,
                              col_types = readr::cols())
 
 # transform if not in long format already
-if(dim(raw_data)[2] != 5) {
+if(dim(raw_data)[2] != 6) {
   raw_long = raw_data %>%
     tidyr::pivot_longer(-c(ID, UniprotAccession), 
                         names_to = "variable", 
                         values_to = "value") %>%
     tidyr::separate(col = variable, 
-                    into = c("condition", "chip", "time"), 
+                    into = c("group", "chip_id", "time"), 
                     sep = "_") %>%
-    dplyr::select(-UniprotAccession) %>%
-    setNames(c("id", "condition", "chip", "time", "measurement")) %>%
     dplyr::mutate(time = as.numeric(time))
-} else if(names(raw_data) == c("id", "condition", "chip", "time", "measurement")) {
+} else if(names(raw_data) == c("ID", "UniprotAccession",  "group", "chip_id", "time", "value")) {
   raw_long = raw_data
 } else {
   stop("Format of input data not recognized. Please reformat your data and try again.")
@@ -322,13 +324,13 @@ if(dim(raw_data)[2] != 5) {
 # such as reaction velocity
 # removes saturated data points before fitting the model
 peptide_reaction_estimate = raw_long %>%
-  dplyr::filter(measurement < max(measurement)) %>%
-  dplyr::group_by(id, condition, chip) %>%
-  do(broom::tidy(lm(.$measurement ~ .$time))) %>%
+  dplyr::filter(value < max(value)) %>%
+  dplyr::group_by(ID, group, chip_id) %>%
+  do(broom::tidy(lm(.$value ~ .$time))) %>%
   dplyr::filter(term == ".$time") %>%
-  dplyr::select(id, condition, chip, estimate) %>%
+  dplyr::select(id = ID, group, chip_id, estimate) %>%
   tidyr::pivot_wider(id_cols = "id", 
-                     names_from = c("condition", "chip"), 
+                     names_from = c("group", "chip_id"), 
                      values_from = "estimate") %>%
   tidyr::drop_na()
 
@@ -416,7 +418,7 @@ close(pbp)
 specificity_df = calculate_permutation_score(peptide_perm, 
                                              kinase_pred_summary, 
                                              no_perm) %>%
-  ungroup()
+  dplyr::ungroup()
 
 # selectivity score - sample_permutation -------------
 cat("Calculating selectivity score - permuting samples...\n")
@@ -448,7 +450,7 @@ close(pbs)
 # the score from original data is higher then the one from permutations
 selectivity_df = calculate_permutation_score(sample_perm, 
                                              kinase_pred_summary, no_perm) %>%
-  ungroup()
+  dplyr::ungroup()
 
 # final kinase scores -------------
 # combine selectivity and specificity data.frames created by row and column 
@@ -477,16 +479,17 @@ kinase_scores = cbind.data.frame(kinase_pred_summary,
 peptide_stats = peptide_reaction_estimate %>%
   tibble::column_to_rownames(var = "id") %>%
   dplyr::group_by(id = rownames(.)) %>%
-  do(broom::tidy(t.test(.[ctrl_cols], .[exp_cols]))) %>%
-  ungroup() %>%
+  do(broom::tidy(t.test(.[meta$ctrl], .[meta$exp]))) %>%
+  dplyr::ungroup() %>%
   dplyr::select(id,
                 mean_ctrl = estimate1,
                 mean_exp = estimate2,
                 statistic = statistic,
                 pvalue = p.value) %>%
-  left_join(peptide_reaction_estimate, by = "id")
+  dplyr::left_join(peptide_reaction_estimate, by = "id")
 
 # export data -------------
+# TODO change to base R ro remove readr dependency
 cat("Exporting peptide scores.\n")
 readr::write_delim(peptide_stats,
                    file = paste0(output_dir, "/", "peptide_scores.txt"),
